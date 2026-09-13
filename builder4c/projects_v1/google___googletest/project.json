@@ -1,0 +1,17 @@
+{
+    "homepage": "https://github.com/google/googletest",
+    "language": null,
+    "main_repo": "https://github.com/google/googletest",
+    "repo_name": "google___googletest",
+    "env": [],
+    "before_install": [],
+    "c_compile": {
+        "build": "ninja",
+        "build_flags": [
+            "-Dgtest_build_tests=ON"
+        ],
+        "test": "ctest",
+        "test_flags": [],
+        "clean": "git"
+    }
+}

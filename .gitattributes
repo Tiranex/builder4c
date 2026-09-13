@@ -1,0 +1,10 @@
+# Normalizar finales de linea: LF en el repositorio (el pipeline corre en Linux)
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+# Datos del dataset tal cual los emite el pipeline (CSV con CRLF, como Major)
+*.csv -text
+dataset/**/raw/** -text
+*.png binary
+*.pdf binary
+*.tar binary

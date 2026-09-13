@@ -1,0 +1,11 @@
+[project]
+name = "pmt-cpp-dataset"
+version = "0.2.0"
+description = "Dataset de Predictive Mutation Testing (PMT) para C++ con el esquema de Major/Java, y el pipeline que lo genera (builder4c/pmt)"
+readme = "README.md"
+requires-python = ">=3.8"
+# El pipeline builder4c/pmt usa solo la libreria estandar de Python.
+dependencies = []
+
+[tool.uv]
+package = false

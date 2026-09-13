@@ -1,0 +1,15 @@
+{
+    "project": "Demo",
+    "version": "1",
+    "sources": ["src/calculator.cpp"],
+    "test_sources": ["tests/test_calculator.cpp"],
+    "build_cmd": "make -s all",
+    "list_tests_cmd": "build/test_calculator --list",
+    "run_test_cmd": "build/test_calculator {test}",
+    "timeout_s": 5,
+    "coverage": {
+        "build_cmd": "make -s cov",
+        "run_test_cmd": "build-cov/test_calculator {test}",
+        "object_dir": "build-cov"
+    }
+}

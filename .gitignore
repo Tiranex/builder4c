@@ -1,0 +1,40 @@
+# ---- Python ----
+__pycache__/
+*.py[oc]
+*.egg-info/
+build/
+dist/
+wheels/
+.venv/
+venv/
+
+# ---- Herramientas externas no versionadas aqui ----
+# Defects4C (tiene su propio repositorio/licencia)
+defects4c/
+
+# ---- Datos del dataset Java de referencia (Major) ----
+# No se redistribuyen: se usan solo en local para pmt.validate_reference.
+Csv_1_fixed_mutations/
+Csv_1_results/
+*_fixed_mutations/
+
+# ---- Salidas de ejecucion del pipeline (pesadas / regenerables) ----
+# El dataset final (dataset/, copiado desde estas salidas) no se sube al remoto.
+dataset/
+out/
+/out/
+builder4c/out_batch*/
+builder4c/out_batch*.log
+builder4c/out_run*/
+builder4c/out_run*.log
+builder4c/demo/out/
+*.mutation_workdir/
+mutants_out/
+*.tar
+
+# ---- Notas personales, logs y temporales ----
+anotaciones_*.yaml
+*.log
+# ...pero mutants.log forma parte del raw estilo Major del dataset
+!mutants.log
+*.tmp

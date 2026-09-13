@@ -1,0 +1,18 @@
+{
+    "homepage": "https://github.com/facebook/zstd",
+    "language": null,
+    "main_repo": "https://github.com/facebook/zstd",
+    "repo_name": "facebook___zstd",
+    "env": [],
+    "before_install": [],
+    "c_compile": {
+        "build": "ninja",
+        "build_flags": [
+            "-S=build/cmake",
+            "-DZSTD_BUILD_TESTS=ON"
+        ],
+        "test": "ctest",
+        "test_flags": [],
+        "clean": "git"
+    }
+}

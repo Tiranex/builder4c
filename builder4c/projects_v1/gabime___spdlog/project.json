@@ -1,0 +1,17 @@
+{
+    "homepage": "https://github.com/gabime/spdlog",
+    "language": null,
+    "main_repo": "https://github.com/gabime/spdlog",
+    "repo_name": "gabime___spdlog",
+    "env": [],
+    "before_install": [],
+    "c_compile": {
+        "build": "ninja",
+        "build_flags": [
+            "-DSPDLOG_BUILD_TESTS=ON"
+        ],
+        "test": "ctest",
+        "test_flags": [],
+        "clean": "git"
+    }
+}

@@ -1,0 +1,16 @@
+{
+    "homepage": "https://github.com/Morwenn/cpp-sort/",
+    "commit_hash": "2e8c3addad3a342154a00e1a1279639863cf1c55",
+    "language": null,
+    "main_repo": "https://github.com/Morwenn/cpp-sort",
+    "repo_name": "morwenn___cpp-sort",
+    "env": ["CXX=g++","CC=gcc"],
+    "before_install": [],
+    "c_compile": {
+        "build": "ninja",
+        "build_flags": ["-DBUILD_TESTING=ON", "-CPPSORT_BUILD_TESTING=ON"],
+        "test": "ctest",
+        "test_flags": [],
+        "clean": "git"
+    }
+}

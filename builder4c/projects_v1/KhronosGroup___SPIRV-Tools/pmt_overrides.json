@@ -1,0 +1,1 @@
+{"pre_configure": ["python3 utils/git-sync-deps"], "cmake_flags": ["-DSPIRV_SKIP_EXECUTABLES=OFF", "-DSPIRV_WERROR=OFF"]}

@@ -1,0 +1,17 @@
+{
+    "homepage": "https://github.com/nlohmann/json",
+    "language": null,
+    "main_repo": "https://github.com/nlohmann/json",
+    "repo_name": "nlohmann___json",
+    "env": [],
+    "before_install": [],
+    "c_compile": {
+        "build": "ninja",
+        "build_flags": [
+            "-DJSON_BuildTests=ON"
+        ],
+        "test": "ctest",
+        "test_flags": [],
+        "clean": "git"
+    }
+}

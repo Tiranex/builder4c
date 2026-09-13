@@ -1,0 +1,17 @@
+{
+    "homepage": "https://github.com/google/leveldb",
+    "language": null,
+    "main_repo": "https://github.com/google/leveldb",
+    "repo_name": "google___leveldb",
+    "env": [],
+    "before_install": [],
+    "c_compile": {
+        "build": "ninja",
+        "build_flags": [
+            "-DLEVELDB_BUILD_BENCHMARKS=OFF"
+        ],
+        "test": "ctest",
+        "test_flags": [],
+        "clean": "git"
+    }
+}

@@ -1,0 +1,18 @@
+{
+    "homepage": "https://github.com/catchorg/Catch2",
+    "language": null,
+    "main_repo": "https://github.com/catchorg/Catch2",
+    "repo_name": "catchorg___Catch2",
+    "env": [],
+    "before_install": [],
+    "c_compile": {
+        "build": "ninja",
+        "build_flags": [
+            "-DCATCH_BUILD_TESTING=ON",
+            "-DBUILD_TESTING=ON"
+        ],
+        "test": "ctest",
+        "test_flags": [],
+        "clean": "git"
+    }
+}

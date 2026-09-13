@@ -1,0 +1,1 @@
+{"cmake_flags": ["-DENABLE_BUILD_TESTS=ON", "-DENABLE_VALGRIND_TESTS=OFF"]}

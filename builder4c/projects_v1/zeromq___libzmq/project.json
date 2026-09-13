@@ -1,0 +1,16 @@
+{
+    "homepage": "https://github.com/zeromq/libzmq",
+    "language": null,
+    "main_repo": "https://github.com/zeromq/libzmq",
+    "repo_name": "zeromq___libzmq",
+    "commit_hash": "7a7bfa10e6b0e99210ed9397369b59f9e69cef8e",
+    "env": [],
+    "before_install": ["libkrb5-dev libnorm-dev libpgm-dev libgnutls28-dev libsodium-dev libnss3-dev libbsd-dev"],
+    "c_compile": {
+        "build": "ninja",
+        "build_flags": [],
+        "test": "ctest",
+        "test_flags": [],
+        "clean": "git"
+    }
+}

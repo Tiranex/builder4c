@@ -1,0 +1,17 @@
+{
+    "homepage": "https://github.com/simdjson/simdjson",
+    "language": null,
+    "main_repo": "https://github.com/simdjson/simdjson",
+    "repo_name": "simdjson___simdjson",
+    "env": [],
+    "before_install": [],
+    "c_compile": {
+        "build": "ninja",
+        "build_flags": [
+            "-DSIMDJSON_DEVELOPER_MODE=ON"
+        ],
+        "test": "ctest",
+        "test_flags": [],
+        "clean": "git"
+    }
+}

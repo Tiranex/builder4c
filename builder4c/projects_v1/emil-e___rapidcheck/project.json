@@ -1,0 +1,16 @@
+{
+    "homepage": "https://github.com/emil-e/rapidcheck.git",
+    "commit_hash": "ff6af6fc683159deb51c543b065eba14dfcf329b",
+    "language": null,
+    "main_repo": "https://github.com/emil-e/rapidcheck.git",
+    "repo_name": "emil-e___rapidcheck",
+    "env": [],
+    "before_install": [],
+    "c_compile": {
+        "build": "ninja",
+        "build_flags": ["-DRC_ENABLE_TESTS=ON"],
+        "test": "ctest",
+        "test_flags": [],
+        "clean": "git"
+    }
+}
