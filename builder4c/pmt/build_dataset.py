@@ -15,6 +15,7 @@ Sin --src-root, las columnas de codigo quedan vacias y hay que pasar
 """
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -27,6 +28,10 @@ from .dataset import (
     build_test_map_rows,
     write_csv,
 )
+
+TEST_SOURCES_SIDECAR_COLUMNS = ["TestMethod", "TestFile", "TestLine", "TestFunction",
+                                "Granularity", "Sections", "Strategy", "Command",
+                                "SourceUrl"]
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -86,10 +91,14 @@ def main(argv=None) -> int:
     src_resolver = make_resolver(src_roots, args.language)
     test_resolver = make_resolver(test_roots, args.language)
 
+    # el primer src-root es la raiz del repo: ahi se resuelven las rutas de
+    # test_sources.csv (enlace test ctest -> fichero/funcion del caso de prueba)
+    repo_root = src_roots[0] if src_roots else None
     results = build_results_rows(raw_dir, src_resolver,
                                  keep_missing_source=args.keep_missing_source)
     test_map = build_test_map_rows(raw_dir, test_resolver,
-                                   keep_missing_source=args.keep_missing_source)
+                                   keep_missing_source=args.keep_missing_source,
+                                   repo_root=repo_root)
 
     prefix = f"{args.project}_{args.version}"
     results_path = out_dir / f"{prefix}_results.csv"
@@ -99,7 +108,46 @@ def main(argv=None) -> int:
 
     logger.info("%s: %d filas de mutantes", results_path, len(results))
     logger.info("%s: %d filas de tests", test_map_path, len(test_map))
+    write_test_sources_sidecar(raw_dir, out_dir, prefix)
     return 0
+
+
+def write_test_sources_sidecar(raw_dir: Path, out_dir: Path, prefix: str) -> None:
+    """<prefix>_test_sources.csv: para cada TestMethod del test_map, fichero,
+    linea, funcion, granularidad, estrategia de enlace, comando ctest y URL
+    permanente al commit (si meta.json trae repo_url y commit). Ademas copia
+    meta.json (commit, fuentes mutadas, limites) junto a los CSV."""
+    ts_path = raw_dir / "test_sources.csv"
+    meta: dict = {}
+    meta_path = raw_dir / "meta.json"
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            meta = {}
+        (out_dir / f"{prefix}_meta.json").write_text(
+            json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if not ts_path.is_file():
+        return
+    from .major_format import dotted_test_name, read_test_map
+    from .test_source_map import read_test_sources_csv, source_url
+    test_names = read_test_map(raw_dir / "testMap.csv")
+    sources = read_test_sources_csv(ts_path)
+    rows = []
+    for test_no in sorted(test_names):
+        ts = sources.get(test_no)
+        if ts is None:
+            continue
+        rows.append([dotted_test_name(test_names[test_no]), ts.file, ts.line,
+                     ts.function, ts.granularity,
+                     ts.sections if ts.granularity == "section" else "",
+                     ts.strategy, ts.command,
+                     source_url(meta.get("repo_url", ""), meta.get("commit", ""),
+                                ts.file, ts.line)])
+    path = out_dir / f"{prefix}_test_sources.csv"
+    write_csv(path, TEST_SOURCES_SIDECAR_COLUMNS, rows)
+    linked = sum(1 for r in rows if r[1])
+    logger.info("%s: %d/%d tests con enlace a su codigo", path, linked, len(rows))
 
 
 if __name__ == "__main__":

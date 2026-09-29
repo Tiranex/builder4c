@@ -2,6 +2,7 @@
     "homepage": "https://github.com/catchorg/Catch2",
     "language": null,
     "main_repo": "https://github.com/catchorg/Catch2",
+    "commit_hash": "02f8b5593a15cdec8558256e6f40a0c7fb5862d6",
     "repo_name": "catchorg___Catch2",
     "env": [],
     "before_install": [],

@@ -156,29 +156,218 @@ def build_results_rows(raw_dir: Path,
     return rows
 
 
+def test_code_from_source(repo_root: Path, ts) -> Optional[List[str]]:
+    """Lineas (sin indentacion, sin llave final) del caso de prueba descrito
+    por una fila de test_sources.csv (pmt.test_source_map.TestSource):
+    granularidad `function` -> la funcion/bloque que contiene la linea;
+    `file` -> el fichero entero. None si no hay fichero o no se puede leer."""
+    if not ts.file:
+        return None
+    path = repo_root / ts.file
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if ts.granularity == "section" and ts.line:
+        # Catch2 -c: solo la(s) SECTION que ejecuta ese test
+        from .test_source_map import prune_catch_sections
+        path_names = [p.strip() for p in (ts.sections or "").split(" > ") if p.strip()]
+        lines = prune_catch_sections(text, ts.line, path_names)
+        if lines:
+            return lines
+    if ts.granularity == "macro" and ts.line:
+        # test generado por macro: la invocacion + las funciones que recibe
+        text_lines = text.splitlines()
+        out: List[str] = []
+        depth, started = 0, False
+        for raw in text_lines[ts.line - 1:]:
+            out.append(raw.strip())
+            depth += raw.count("(") - raw.count(")")
+            started = started or "(" in raw
+            if started and depth <= 0:
+                break
+        # cuerpo del #define con los argumentos de esta invocacion sustituidos
+        # (es el codigo real del test generado)
+        invocation = " ".join(out)
+        define_rel, _, define_line = (ts.sections or "").rpartition(":")
+        if define_rel and define_line.isdigit():
+            out.extend(_expand_macro(repo_root / define_rel, int(define_line), invocation))
+        for fn in [f for f in (ts.function or "").split(",") if f]:
+            other, _, name = fn.rpartition("|")
+            ftext = text
+            if other:
+                fpath = repo_root / other
+                if not fpath.is_file():
+                    continue
+                ftext = fpath.read_text(encoding="utf-8", errors="replace")
+            extracted = extract_named_method(ftext, name)
+            if extracted is not None:
+                out.extend(extracted.lines)
+        return out or None
+    if ts.granularity == "ctest" and ts.line:
+        # test definido solo en CMake: add_test(...) + set_tests_properties
+        # del mismo nombre, mas el comando ya resuelto por ctest
+        return _cmake_test_definition(text, ts.line, ts.function) + (
+            [f"# ctest: {ts.command}"] if ts.command else [])
+    if ts.granularity in ("function", "section"):
+        extracted = None
+        if ts.line:
+            extracted = extract_enclosing_method(text, ts.line)
+        if extracted is None and ts.function:
+            extracted = extract_named_method(text, ts.function)
+        if extracted is not None:
+            return extracted.lines
+        if ts.line:
+            # caso generado por una macro de una linea (Catch2:
+            # ADD_TRAIT_TEST_CASE(lt), METHOD_AS_TEST_CASE(Clase::metodo, ...))
+            macro_code = _macro_invocation_code(text, ts.line)
+            if macro_code:
+                return macro_code
+        return None
+    if ts.granularity == "file":
+        return [l.strip() for l in text.splitlines()]
+    return None
+
+
+def _balanced_block(lines: List[str], start: int) -> List[str]:
+    """Lineas (strip) desde `start` (0-based) hasta cerrar el parentesis."""
+    out, depth, opened = [], 0, False
+    for raw in lines[start:]:
+        out.append(raw.strip())
+        depth += raw.count("(") - raw.count(")")
+        opened = opened or "(" in raw
+        if opened and depth <= 0:
+            break
+    return out
+
+
+def _cmake_test_definition(text: str, line: int, name: str) -> List[str]:
+    """Bloque add_test(...) de la linea `line` y los set_tests_properties
+    posteriores que nombran el mismo test (hasta el siguiente add_test)."""
+    import re
+    lines = text.splitlines()
+    if not (1 <= line <= len(lines)):
+        return []
+    out = _balanced_block(lines, line - 1)
+    i = line - 1 + len(out)
+    name_re = re.compile(r"set_tests_properties\s*\(\s*\"?" + re.escape(name) + r"\"?[\s)]")
+    tmpl_re = re.compile(r"set_tests_properties\s*\(")
+    while i < len(lines):
+        raw = lines[i]
+        if re.match(r"\s*add_test\s*\(", raw):
+            break
+        if name_re.search(raw) or (tmpl_re.search(raw) and "${" in raw):
+            block = _balanced_block(lines, i)
+            out.extend(block)
+            i += len(block)
+            continue
+        i += 1
+    return [l for l in out if l]
+
+
+def _macro_invocation_code(text: str, line: int) -> Optional[List[str]]:
+    """Invocacion MACRO(args) de la linea `line` + expansion del #define del
+    mismo fichero, si existe, + metodos `Clase::metodo` referenciados."""
+    import re
+    lines = text.splitlines()
+    if not (1 <= line <= len(lines)):
+        return None
+    invocation = _balanced_block(lines, line - 1)
+    m = re.match(r"\s*(\w+)\s*\(", invocation[0] if invocation else "")
+    if not m:
+        return None
+    out = list(invocation)
+    d = re.search(r"^[ \t]*#[ \t]*define[ \t]+" + re.escape(m.group(1)) + r"\(", text, re.M)
+    if d:
+        def_line = text.count("\n", 0, d.start()) + 1
+        out.extend(_expand_macro_text(text, def_line, " ".join(invocation)))
+    for ref in re.findall(r"\b\w+::(\w+)\b", " ".join(invocation)):
+        extracted = extract_named_method(text, ref)
+        if extracted is not None:
+            out.extend(extracted.lines)
+    return out if len(out) > len(invocation) or d else None
+
+
+def _expand_macro_text(text: str, define_line: int, invocation: str) -> List[str]:
+    import re
+    lines = text.splitlines()
+    block = []
+    for raw in lines[define_line - 1:]:
+        block.append(raw.rstrip())
+        if not raw.rstrip().endswith("\\"):
+            break
+    joined = "\n".join(l[:-1] if l.endswith("\\") else l for l in block)
+    m = re.match(r"\s*#\s*define\s+\w+\(([^)]*)\)(.*)", joined, re.S)
+    a = re.search(r"\((.*)\)", invocation, re.S)
+    if not m or not a:
+        return []
+    params = [x.strip() for x in m.group(1).split(",")]
+    args, depth, cur = [], 0, ""
+    for ch in a.group(1):
+        if ch == "," and depth == 0:
+            args.append(cur.strip())
+            cur = ""
+            continue
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        cur += ch
+    args.append(cur.strip())
+    body = m.group(2)
+    for p, v in zip(params, args):
+        if p:
+            body = re.sub(r"\b" + re.escape(p) + r"\b", lambda _m, v=v: v, body)
+    body = re.sub(r"\s*##\s*", "", body)
+    body = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+    return [l.strip() for l in body.splitlines() if l.strip()]
+
+
+def _expand_macro(define_file: Path, define_line: int, invocation: str) -> List[str]:
+    """Lineas del cuerpo de `#define M(p1, p2) ...` (en `define_line` de
+    `define_file`) con los parametros sustituidos por los argumentos de
+    `invocation` y `##` resuelto; sin indentacion ni lineas vacias."""
+    if not define_file.is_file():
+        return []
+    return _expand_macro_text(define_file.read_text(encoding="utf-8", errors="replace"),
+                              define_line, invocation)
+
+
 def build_test_map_rows(raw_dir: Path,
                         test_src_resolver: Optional[SourceResolver],
-                        keep_missing_source: bool = False) -> List[List]:
+                        keep_missing_source: bool = False,
+                        repo_root: Optional[Path] = None) -> List[List]:
+    """Filas TestMethod,TestMethodCode. El codigo sale, por este orden, del
+    enlace test->fuente de `test_sources.csv` (proyectos ctest, si existe y
+    se da `repo_root`) o del resolver clasico Clase[metodo] (demo/Java)."""
     test_names = read_test_map(raw_dir / "testMap.csv")
+    test_sources = {}
+    ts_path = raw_dir / "test_sources.csv"
+    if repo_root is not None and ts_path.is_file():
+        from .test_source_map import read_test_sources_csv
+        test_sources = read_test_sources_csv(ts_path)
     source_cache: Dict[str, Optional[str]] = {}
     rows: List[List] = []
     skipped = 0
     for test_no in sorted(test_names):
         raw_name = test_names[test_no]
         cls, method = split_test_name(raw_name)
-        text = None
-        if test_src_resolver is not None:
-            if cls not in source_cache:
-                source_cache[cls] = test_src_resolver(cls)
-            text = source_cache[cls]
-        extracted = extract_named_method(text, method) if (text and method) else None
-        if extracted is None:
+        extracted = None
+        lines: Optional[List[str]] = None
+        if test_no in test_sources and repo_root is not None:
+            lines = test_code_from_source(repo_root, test_sources[test_no])
+        if lines is None:
+            text = None
+            if test_src_resolver is not None:
+                if cls not in source_cache:
+                    source_cache[cls] = test_src_resolver(cls)
+                text = source_cache[cls]
+            extracted = extract_named_method(text, method) if (text and method) else None
+            if extracted is not None:
+                lines = extracted.lines
+        if lines is None:
             skipped += 1
             if not keep_missing_source:
                 continue
             code = "[]"
         else:
-            code = str(extracted.lines)
+            code = str(lines)
         rows.append([dotted_test_name(raw_name), code])
     if skipped:
         action = "mantenidos sin codigo" if keep_missing_source else "descartados"

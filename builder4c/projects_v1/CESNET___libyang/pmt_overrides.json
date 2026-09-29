@@ -1,1 +1,36 @@
-{"cmake_flags": ["-DENABLE_BUILD_TESTS=ON", "-DENABLE_VALGRIND_TESTS=OFF"]}
+{
+  "_comment": "Ampliacion 2026-09 (ver HANDOFF_ampliacion_3_proyectos.md). Commit fijado en project.json (49e2a3a6). Cada test ctest es un binario cmocka (utest_<x>) con varias funciones UTEST(): con test_expansion=cmocka cada funcion se ejecuta por separado con el shim LD_PRELOAD de la imagen (docker/cmocka_filter.c) + CMOCKA_TEST_FILTER, porque la cmocka 1.1.7 de Ubuntu no lee esa variable; el enlace test->funcion es directo (estrategia subtest).",
+  "cmake_flags": [
+    "-DENABLE_BUILD_TESTS=ON",
+    "-DENABLE_VALGRIND_TESTS=OFF"
+  ],
+  "sources": [
+    "src/plugins_types/integer.c",
+    "src/plugins_types/bits.c",
+    "src/plugins_types/union.c",
+    "src/plugins_types/date_and_time.c",
+    "src/plugins_types/binary.c",
+    "src/plugins_types/instanceid.c",
+    "src/plugins_types/ipv4_address.c",
+    "src/plugins_types/ipv6_address.c",
+    "src/plugins_types/identityref.c",
+    "src/plugins_types/ipv4_prefix.c",
+    "src/hash_table.c",
+    "src/json.c",
+    "src/xml.c",
+    "src/path.c",
+    "src/tree_data_hash.c",
+    "src/plugins_exts/nacm.c",
+    "src/plugins_exts/yangdata.c"
+  ],
+  "test_expansion": "cmocka",
+  "exclude_tests": "_valgrind$",
+  "max_tests": 0,
+  "max_mutants": 1200,
+  "test_workers": 4,
+  "mutant_budget_s": 600,
+  "mutation_deadline_s": 21600,
+  "coverage_max_tests": 500,
+  "coverage_deadline_s": 3000,
+  "ctest_timeout": 60
+}

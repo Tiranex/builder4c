@@ -11,6 +11,7 @@ Uso (desde builder4c/):
 
 import argparse
 import csv
+import json
 import sys
 from collections import Counter
 from pathlib import Path
@@ -58,12 +59,46 @@ def merge(out_root: Path) -> int:
         w.writerow(["TestMethod", "TestMethodCode"])
         w.writerows(tm_rows)
 
+    # enlace test -> codigo fuente (fichero, linea, URL al commit), si existe
+    ts_header = None
+    ts_rows = []
+    for path in sorted(out_root.glob("*_1/*_1_test_sources.csv")):
+        with open(path, encoding="utf-8", newline="") as fh:
+            reader = csv.reader(fh)
+            head = next(reader, None)
+            if head is None:
+                continue
+            ts_header = ts_header or head
+            ts_rows.extend(reader)
+    if ts_header:
+        with open(out_root / "pmt_dataset_test_sources.csv", "w",
+                  encoding="utf-8", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(ts_header)
+            w.writerows(ts_rows)
+
+    # commit y fuentes mutadas de cada proyecto (meta.json por proyecto)
+    metas = {}
+    for path in sorted(out_root.glob("*_1/*_1_meta.json")):
+        try:
+            metas[path.parent.name] = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+    if metas:
+        (out_root / "pmt_dataset_meta.json").write_text(
+            json.dumps(metas, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
     print(f"{len(rows)} filas de mutantes de {len(per_project)} proyectos "
           f"-> {out_root / 'pmt_dataset_results.csv'}")
     for proj, n in per_project.most_common():
-        print(f"  {proj:40s} {n:5d}")
+        commit = (metas.get(proj) or {}).get("commit", "")
+        print(f"  {proj:40s} {n:5d}  {commit[:12]}")
     print("Status:", dict(status))
     print(f"{len(tm_rows)} tests -> {out_root / 'pmt_dataset_test_map.csv'}")
+    if ts_header:
+        linked = sum(1 for r in ts_rows if len(r) > 1 and r[1])
+        print(f"{linked}/{len(ts_rows)} tests con enlace a su codigo -> "
+              f"{out_root / 'pmt_dataset_test_sources.csv'}")
     return 0
 
 

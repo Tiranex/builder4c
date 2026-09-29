@@ -53,10 +53,33 @@ def mask_comments_and_strings(text: str, keep_strings: bool = False) -> str:
                 i += 2
                 continue
             if ch == '"':
+                # C++11 raw string: R"delim( ... )delim" (con prefijos u8R, LR...)
+                if i > 0 and text[i - 1] == "R" and \
+                        (i < 2 or not (text[i - 2].isalnum() or text[i - 2] == "_")
+                         or text[i - 3:i - 1] in ("u8",) or text[i - 2] in "uUL"):
+                    open_paren = text.find("(", i + 1, i + 18)
+                    delim = text[i + 1:open_paren] if open_paren != -1 else None
+                    if delim is not None and re.fullmatch(r'[^\s()\\"]*', delim):
+                        close = text.find(")" + delim + '"', open_paren + 1)
+                        if close != -1:
+                            end = close + len(delim) + 2
+                            if not keep_strings:
+                                for k in range(i + 1, end - 1):
+                                    if text[k] != "\n":
+                                        out[k] = _MASK_CHAR
+                            i = end
+                            continue
                 state = "string"
                 i += 1
                 continue
             if ch == "'":
+                # C++14 separador de digitos: 1'000'000, 0xFF'FF, 0b1010'0101
+                j = i - 1
+                while j >= 0 and (text[j].isalnum() or text[j] in "'."):
+                    j -= 1
+                if j + 1 < i and text[j + 1].isdigit() and nxt.isalnum():
+                    i += 1
+                    continue
                 state = "char"
                 i += 1
                 continue

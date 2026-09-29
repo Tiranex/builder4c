@@ -14,3 +14,8 @@ WORKDIR /work/builder4c
 CMD ["bash"]
 # git con HTTP/2 falla en Docker Desktop (Windows): "expected flush after ref listing"
 RUN git config --system http.version HTTP/1.1
+# shim LD_PRELOAD: ejecutar un solo caso de un binario cmocka (libyang) con
+# CMOCKA_TEST_FILTER=<funcion>; la cmocka 1.1.7 no lee esa variable por si sola
+COPY cmocka_filter.c /tmp/cmocka_filter.c
+RUN gcc -shared -fPIC -O2 -o /usr/local/lib/libcmocka_filter.so /tmp/cmocka_filter.c -ldl -lcmocka \
+    && rm /tmp/cmocka_filter.c

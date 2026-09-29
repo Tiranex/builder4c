@@ -99,8 +99,115 @@ todas las columnas derivables coinciden al 100 %. Diferencias documentadas:
   instrumentado para cobertura; `--only`, `--project-budget`,
   `--max-mutants`); ver `../GUIA_UBUNTU.md` y `../docker/`
 - `merge_datasets.py` — concatena los `<Proyecto>_1_results.csv` /
-  `_test_map.csv` del batch en `pmt_dataset_results.csv` /
-  `pmt_dataset_test_map.csv`
+  `_test_map.csv` / `_test_sources.csv` del batch en `pmt_dataset_results.csv`
+  / `pmt_dataset_test_map.csv` / `pmt_dataset_test_sources.csv` y reune los
+  `_meta.json` (commit por proyecto) en `pmt_dataset_meta.json`
+- `test_source_map.py` — enlace test de ctest → codigo del caso de prueba
+  (ver siguiente seccion)
 - `validate_reference.py` — verificacion contra el dataset Java publicado
+- `verify_dataset.py` — verificacion estatica y por reejecucion de un
+  dataset generado (ver seccion propia)
+- `publish_dataset.py` — monta el `dataset/` publicable a partir de las
+  salidas del batch
 
 Sin dependencias fuera de la libreria estandar de Python 3.8+.
+Tests unitarios: `python3 -m unittest discover -s tests_pmt` (desde `builder4c/`).
+
+## Enlace test ctest → codigo del caso de prueba
+
+En los proyectos reales el "test" es cada entrada de `ctest -N`
+(`ctest.<Proyecto>.<nombre ctest>` en el dataset). `test_source_map.py`
+resuelve donde vive su codigo combinando `ctest --show-only=json-v1`
+(comando y argumentos de cada test) con un indice de los ficheros de test
+del repo:
+
+| Estrategia | Cuando | Granularidad |
+|---|---|---|
+| `aws_test_case` | `driver <nombre>` y `AWS_TEST_CASE(<nombre>, fn)` | funcion `fn` |
+| `catch_test_case` | un argumento coincide con `TEST_CASE("...")` / `SCENARIO` / `TEMPLATE_TEST_CASE` | ese bloque |
+| `test_macro` | macro propia con cuerpo `XXX_TEST_CASE(nombre) {` | ese bloque |
+| `gtest_filter` | `--gtest_filter=Suite.Name` o nombre `Suite.Name` | `TEST(Suite, Name)` |
+| `subtest` | id expandido `<test>/<funcion>` (ver abajo) | esa funcion |
+| `script` | comando python/bash con un fichero del repo | fichero |
+| `aws_test_macro` | test generado por una macro con `##` (`DEFINE_*_TEST(fn, ...)`) | invocacion + `#define` expandido + funciones argumento (`macro`) |
+| `exe_stem` | ejecutable `utest_x` / `x_test` (o un argumento: `regress_fuzz_<x>`) ↔ fichero de test | fichero |
+| `ctest_definition` | test sin caso concreto (Catch2 `--list-tests`, `-h`...) | `add_test(...)` + `set_tests_properties(...)` del CMakeLists (`ctest`) |
+| `none` | sin correspondencia | — |
+
+Salidas: `raw/test_sources.csv` (TestNo, fichero, linea, funcion, granularidad,
+estrategia, comando), `raw/ctest_tests.json` (json-v1 crudo) y
+`raw/meta.json` (repo, **commit**, fuentes mutadas, limites). `build_dataset`
+usa `test_sources.csv` para rellenar `TestMethodCode` (misma convencion que
+el dataset Java: lineas sin indentacion, desde la linea del nombre, sin la
+llave final) y escribe `<P>_<v>_test_sources.csv` con una columna
+`SourceUrl` = enlace permanente `repo/blob/<commit>/<fichero>#L<linea>`.
+
+**Expansion en sub-tests** (`test_expansion` en `mutation.json` /
+`pmt_overrides.json`): cuando un test de ctest es un binario con muchos
+casos, cada caso pasa a ser un test del dataset (`ctest.<P>.<test>/<caso>`)
+con enlace a su funcion:
+
+| Modo | Listado de casos | Ejecucion de un caso |
+|---|---|---|
+| `cmocka` | funciones `UTEST()` / `cmocka_unit_test*()` del fichero del binario | `LD_PRELOAD=libcmocka_filter.so CMOCKA_TEST_FILTER=<fn> ctest -R ^<test>$` |
+| `gtest` | `<exe> --gtest_list_tests` | `GTEST_FILTER=Suite.Name ctest -R ^<test>$` |
+| `catch2` | `<exe> --list-tests --verbosity high -r xml` (trae fichero y linea) | `cd <wd> && exec timeout -k 5 T <exe> "<nombre escapado>"` (sin ctest) |
+
+- La cmocka 1.1.7 de Ubuntu **no** lee ninguna variable de filtro: la imagen
+  Docker compila `docker/cmocka_filter.c`, un shim `LD_PRELOAD` que llama a
+  `cmocka_set_test_filter()` con `$CMOCKA_TEST_FILTER` (ruta configurable con
+  `PMT_CMOCKA_PRELOAD`).
+- En `catch2` el binario se llama directamente (ctest no puede pasarle el
+  filtro); el timeout de coreutils devuelve 124 (`TIME`) y la muerte por
+  senal ≥ 128 (`EXC`). En la fase de cobertura se usa el binario de
+  `build-cov`.
+- `expand_tests` (regex) limita que tests de ctest se expanden (Catch2:
+  `^RunTests$`, la suite completa); `exclude_tests` (regex) descarta tests
+  de ctest antes de todo.
+- Granularidad `section`: cuando un `add_test` de Catch2 lanza
+  `SelfTest "<caso>" -c <seccion> [-c <sub>]`, `TestMethodCode` contiene el
+  `TEST_CASE` sin las `SECTION` hermanas que no se ejecutan (columna
+  `Sections` de `test_sources.csv`).
+
+Ejecucion de los tests de cada mutante (`mutation.json`): `test_workers`
+en paralelo; cada test que falla en paralelo se reejecuta solo y ese es su
+veredicto (interferencias entre tests, p. ej. `utest_inout/test_output_fd`
+de libyang, no generan kills falsos). Limite por test =
+`min(timeout_s, max(timeout_floor_s, timeout_factor × t_base + 2))` con
+`t_base` medido en la linea base (`raw/test_timeouts.csv`); si mas de 3
+tests agotan el tiempo, se confirman 3 a solas y, si repiten, se aceptan
+todos (bucle infinito sistematico).
+
+`pmt.test_source_map --relink [--expansion catch2 --expand-only ^RunTests$]`
+vuelve a enlazar un raw ya generado con el indice actual sin empeorar
+nunca un enlace previo; despues `pmt.build_dataset` regenera los CSV.
+`pmt.publish_dataset` monta `dataset/` (copia de proyectos, `source_snapshot/`
+con los fuentes mutados y los ficheros de test en el commit, CSV
+concatenados y reporte).
+
+El runner guarda ademas `raw/mutant_locations.csv` (offsets exactos de cada
+mutante: `mutants.log`, como en Major, solo guarda la linea) y procesa los
+mutantes muestreados en orden aleatorio determinista cuando hay deadline,
+para que un corte por tiempo no deje fuera los ultimos ficheros.
+
+## Verificacion del dataset (`verify_dataset.py`)
+
+```bash
+python3 -m pmt.verify_dataset --projects projects_v1 --replay 25     --project-dir out_run3_aws/aws-c-common_1 --repo /pmt_work/awslabs___aws-c-common/repo
+```
+
+- **Estatica**: recalcula con codigo independiente todo lo derivable del raw
+  y del fuente en el commit (Status/Label/Killing/Passing/Tests contra
+  killMap/covMap, SrcMethodKey, MutSrcLineNo, Body, SrcLines, Before/After,
+  BeforePMT/AfterPMT, tests existentes, test_sources con fichero/linea
+  validos, commit = `commit_hash` de `project.json`).
+- **Dinamica** (`--replay N`, dentro del contenedor): reaplica N mutantes
+  `KILLED` y N `SURVIVED` en sus offsets exactos, recompila y reejecuta sus
+  tests: los `KILLED` deben volver a fallar y los `SURVIVED` pasar.
+
+Uso manual sobre un build ya configurado:
+
+```bash
+python3 -m pmt.test_source_map --build-dir /pmt_work/X/build \
+    --repo /pmt_work/X/repo --tests-from out/X_1/raw/testMap.csv --out out/X_1/raw
+```

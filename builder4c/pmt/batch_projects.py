@@ -74,6 +74,11 @@ EXCLUDE_SRC_RE = re.compile(
     r"third[_-]?party|3rdparty|external|extern|tools|fuzz(ing)?|docs?|"
     r"samples?|perf|contrib|deps|vendor|cmake|scripts?)(/|$)", re.I)
 
+# ficheros de test que viven junto a las fuentes (nng: bus_test.c, leveldb:
+# env_posix_test.cc, c_test.c...): mutarlos no tiene sentido para el dataset
+EXCLUDE_TEST_FILE_RE = re.compile(
+    r"(^|/)(test_[^/]*|[^/]*[_\-.]tests?|[^/]*Tests?|[^/]*_utest)\.(c|cc|cpp|cxx)$")
+
 SRC_EXTS = (".cpp", ".cc", ".cxx", ".c")
 HDR_EXTS = (".hpp", ".hh", ".h", ".ipp")
 
@@ -84,6 +89,7 @@ class ProjectResult:
     stage: str = "inicio"       # ultima fase alcanzada
     ok: bool = False
     detail: str = ""
+    commit: str = ""            # HEAD real del checkout mutado
     tests: int = 0
     sources: List[str] = field(default_factory=list)
     mutants: int = 0
@@ -118,6 +124,14 @@ def clone_project(repo_url: str, commit: str, repo_dir: Path,
     if (repo_dir / ".git").exists():
         head = run(["git", "rev-parse", "--verify", "HEAD"], repo_dir, 60)
         if head.returncode == 0:
+            # una tanda interrumpida (docker stop) puede dejar un fuente
+            # mutado: se restauran los ficheros versionados antes de seguir
+            restored = run(["git", "status", "--short", "--untracked-files=no"],
+                           repo_dir, 60).stdout.strip()
+            if restored:
+                run(["git", "checkout", "--", "."], repo_dir, 120)
+                progress.log("  clone: restaurados ficheros modificados: "
+                             + " ".join(l.split()[-1] for l in restored.splitlines())[:200])
             progress.log(f"  clone: reutilizando checkout existente")
             return True, "reutilizado"
         # clone anterior a medias (fetch fallido): se rehace desde cero
@@ -185,8 +199,26 @@ def compiled_files(build_dir: Path, repo_dir: Path) -> Optional[set]:
 
 
 def select_sources(repo_dir: Path, build_dir: Path, cmake_src: Path,
-                   max_files: int = 3) -> List[str]:
+                   max_files: int = 3,
+                   explicit: Optional[List[str]] = None) -> List[str]:
+    """Ficheros a mutar. Con `explicit` (override `sources`) se respetan
+    los que existen en el repo, avisando de los que no forman parte del
+    build segun compile_commands.json; si no, seleccion heuristica."""
     compiled = compiled_files(build_dir, repo_dir)
+
+    if explicit:
+        chosen = []
+        for rel in explicit:
+            if not (repo_dir / rel).is_file():
+                print(f"  aviso: fuente explicita inexistente, se omite: {rel}",
+                      flush=True)
+                continue
+            if compiled is not None and Path(rel).suffix in SRC_EXTS \
+                    and rel not in compiled:
+                print(f"  aviso: {rel} no aparece en compile_commands.json",
+                      flush=True)
+            chosen.append(rel)
+        return chosen
 
     def candidates(exts) -> List[Tuple[int, str]]:
         found = []
@@ -194,7 +226,7 @@ def select_sources(repo_dir: Path, build_dir: Path, cmake_src: Path,
             if path.suffix not in exts or not path.is_file():
                 continue
             rel = path.relative_to(repo_dir).as_posix()
-            if EXCLUDE_SRC_RE.search(rel):
+            if EXCLUDE_SRC_RE.search(rel) or EXCLUDE_TEST_FILE_RE.search(rel):
                 continue
             size = path.stat().st_size
             if not (1500 <= size <= 60000):
@@ -224,7 +256,8 @@ def select_sources(repo_dir: Path, build_dir: Path, cmake_src: Path,
 def process_project(name: str, projects_dir: Path, work_root: Path,
                     out_root: Path, pmt_cwd: Path, progress: Progress,
                     budget_s: int = 0,
-                    max_mutants: int = MAX_MUTANTS) -> ProjectResult:
+                    max_mutants: int = MAX_MUTANTS,
+                    smoke: bool = False) -> ProjectResult:
     t0 = time.time()
     result = ProjectResult(project=name)
     short = name.split("___")[-1]
@@ -256,6 +289,27 @@ def process_project(name: str, projects_dir: Path, work_root: Path,
     extra_c = overrides.get("c_flags", "")
     extra_cxx = overrides.get("cxx_flags", "")
     ctest_timeout = int(overrides.get("ctest_timeout", CTEST_TIMEOUT))
+    # limites ampliables por proyecto (ver GUIA §10 y HANDOFF_ampliacion):
+    #   sources (lista explicita), max_sources, max_tests (0 = todos los que
+    #   cubren), max_mutants, mutant_budget_s, mutation_deadline_s,
+    #   coverage_max_tests, coverage_deadline_s, test_expansion
+    #   ("gtest"|"cmocka"|"catch2"), expand_tests (regex: que tests ctest se
+    #   expanden), exclude_tests (regex sobre nombres ctest)
+    max_tests = int(overrides.get("max_tests", MAX_TESTS))
+    max_mutants = int(overrides.get("max_mutants", max_mutants))
+    mutant_budget = int(overrides.get("mutant_budget_s", MUTANT_BUDGET))
+    mutation_deadline = int(overrides.get("mutation_deadline_s", MUTATION_DEADLINE))
+    cov_max_tests = int(overrides.get("coverage_max_tests", COVERAGE_MAX_TESTS))
+    cov_deadline_cap = int(overrides.get("coverage_deadline_s", COVERAGE_DEADLINE))
+    test_expansion = str(overrides.get("test_expansion", "") or "")
+    exclude_tests = str(overrides.get("exclude_tests", "") or "")
+    if smoke:
+        # prueba de humo: mismo camino completo, limites minimos
+        max_tests = min(max_tests or 10, 10)
+        max_mutants = min(max_mutants, 5)
+        cov_max_tests = min(cov_max_tests, 40)
+        mutation_deadline = min(mutation_deadline, 900)
+        progress.log("  modo --smoke: 10 tests, 5 mutantes, 40 tests de cobertura")
 
     def flag_args(c_base: str = "", cxx_base: str = "") -> List[str]:
         out = []
@@ -281,6 +335,10 @@ def process_project(name: str, projects_dir: Path, work_root: Path,
         result.detail = detail
         return result
     progress.log(f"  clone ok ({detail})")
+    head = run(["git", "rev-parse", "HEAD"], repo_dir, 60)
+    result.commit = head.stdout.strip() if head.returncode == 0 else ""
+    progress.log(f"  commit: {result.commit or '?'}"
+                 + ("" if commit else "  (HEAD sin fijar en project.json)"))
     for pre_cmd in overrides.get("pre_configure", []):
         # p. ej. SPIRV-Tools: "python3 utils/git-sync-deps" (deps en external/)
         try:
@@ -348,7 +406,9 @@ def process_project(name: str, projects_dir: Path, work_root: Path,
 
     # 5. seleccion de fuentes
     result.stage = "fuentes"
-    sources = select_sources(repo_dir, build_dir, cmake_src)
+    sources = select_sources(repo_dir, build_dir, cmake_src,
+                             max_files=int(overrides.get("max_sources", 3)),
+                             explicit=overrides.get("sources"))
     if not sources:
         result.detail = "sin ficheros fuente candidatos"
         return result
@@ -371,7 +431,7 @@ def process_project(name: str, projects_dir: Path, work_root: Path,
     # con presupuesto por proyecto, la cobertura no puede comerse mas de la
     # mitad de lo que queda (el resto se reserva para la mutacion)
     cov_budget = int(min(COVERAGE_BUILD_TIMEOUT, max(60, left() / 2)))
-    cov_deadline = int(min(COVERAGE_DEADLINE, max(60, left() / 3)))
+    cov_deadline = int(min(cov_deadline_cap, max(60, left() / 3)))
     try:
         r = run(cmd_cov, work, int(min(CONFIGURE_TIMEOUT, max(30, left()))))
         if r.returncode == 0:
@@ -384,7 +444,7 @@ def process_project(name: str, projects_dir: Path, work_root: Path,
                     f"ctest --test-dir {cov_build_dir} --timeout {ctest_timeout} "
                     "-R {test}",
                 "object_dir": str(cov_build_dir),
-                "max_tests": COVERAGE_MAX_TESTS,
+                "max_tests": cov_max_tests,
                 "deadline_s": cov_deadline,
             }
             progress.log("  build de cobertura ok")
@@ -412,9 +472,23 @@ def process_project(name: str, projects_dir: Path, work_root: Path,
         "anchor_regex_tests": True,
         "classify_from_output": True,
         "drop_failing_tests": True,
-        "max_tests": MAX_TESTS,
-        "mutant_budget_s": MUTANT_BUDGET,
+        "max_tests": max_tests,
+        "mutant_budget_s": mutant_budget,
         "test_class": f"ctest.{short}",
+        # enlace test -> codigo fuente (test_sources.csv) y sub-tests
+        "ctest_build_dir": str(build_dir),
+        "repo_dir": str(repo_dir),
+        "test_expansion": test_expansion,
+        "expand_tests": str(overrides.get("expand_tests", "") or ""),
+        "test_workers": int(overrides.get("test_workers", 1)),
+        "exclude_tests": exclude_tests,
+        "meta": {
+            "project": short,
+            "project_dir": name,
+            "repo_url": repo_url,
+            "commit": result.commit,
+            "commit_pinned": bool(commit),
+        },
     }
     if coverage_cfg:
         mutation_config["coverage"] = coverage_cfg
@@ -426,7 +500,7 @@ def process_project(name: str, projects_dir: Path, work_root: Path,
     log_path = out_dir / "mutation.log"
     # el deadline de la mutacion descuenta la fase de cobertura (que corre
     # dentro de mutation_runner) del presupuesto restante del proyecto
-    mut_deadline = int(min(MUTATION_DEADLINE,
+    mut_deadline = int(min(mutation_deadline,
                            max(120, left() - (cov_deadline if coverage_cfg
                                               else 0))))
     progress.log(f"  mutacion: hasta {max_mutants} mutantes, "
@@ -506,13 +580,14 @@ def write_report(results: List[ProjectResult], out_root: Path) -> None:
     (out_root / "report.json").write_text(
         json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     lines = ["# Reporte batch PMT — projects_v1", "",
-             "| Proyecto | Estado | Fase | Tests | Mutantes | Cubiertos | "
+             "| Proyecto | Estado | Fase | Commit | Tests | Mutantes | Cubiertos | "
              "Muertos | Vivos | Filas | Detalle |",
-             "|---|---|---|---|---|---|---|---|---|---|"]
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in results:
         estado = "OK" if r.ok else "FALLO"
         lines.append(
-            f"| {r.project} | {estado} | {r.stage} | {r.tests} | {r.mutants} "
+            f"| {r.project} | {estado} | {r.stage} | {(r.commit or '')[:10]} "
+            f"| {r.tests} | {r.mutants} "
             f"| {r.covered} | {r.killed} | {r.live} | {r.rows} "
             f"| {' '.join(r.detail.split())[:120].replace('|', '/')} |")
     (out_root / "report.md").write_text("\n".join(lines) + "\n",
@@ -530,7 +605,11 @@ def main(argv=None) -> int:
                         help="segundos maximos por proyecto (clone+build+"
                              "cobertura+mutacion); 0 = sin limite")
     parser.add_argument("--max-mutants", type=int, default=MAX_MUTANTS,
-                        help=f"mutantes por proyecto (defecto {MAX_MUTANTS})")
+                        help=f"mutantes por proyecto (defecto {MAX_MUTANTS}; "
+                             "los pmt_overrides.json tienen prioridad)")
+    parser.add_argument("--smoke", action="store_true",
+                        help="prueba de humo: recorre todo el pipeline con "
+                             "10 tests, 5 mutantes y 40 tests de cobertura")
     args = parser.parse_args(argv)
 
     projects_dir = Path(args.projects).resolve()
@@ -555,7 +634,8 @@ def main(argv=None) -> int:
             result = process_project(name, projects_dir, work_root, out_root,
                                      pmt_cwd, progress,
                                      budget_s=args.project_budget,
-                                     max_mutants=args.max_mutants)
+                                     max_mutants=args.max_mutants,
+                                     smoke=args.smoke)
         except Exception as exc:  # noqa: BLE001 - el batch debe continuar
             result = ProjectResult(project=name, stage="excepcion",
                                    detail=repr(exc)[:300])

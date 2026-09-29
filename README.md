@@ -35,17 +35,22 @@ python3 -m pmt.mutation_runner --config demo/demo___mathlib/mutation.json --out 
 python3 -m pmt.build_dataset --input demo/out/Demo_1/raw --project Demo --version 1 \
     --language cpp --src-root demo/demo___mathlib --out demo/out/Demo_1
 
-# 2) batch sobre projects_v1 en Docker (horas; acotado por proyecto)
-./docker/run_batch.sh --project-budget 1500 --max-mutants 60
-tail -f out_batch_docker/progress.log
+# 2) tanda 3 (dataset actual): 3 proyectos en paralelo con los limites de
+#    sus pmt_overrides.json (~1,5-3 h por proyecto)
+NAME=pmt-aws   OUT=out_run3_aws   ./docker/run_batch.sh --only awslabs___aws-c-common
+NAME=pmt-ly    OUT=out_run3_ly    ./docker/run_batch.sh --only CESNET___libyang
+NAME=pmt-catch OUT=out_run3_catch ./docker/run_batch.sh --only catchorg___Catch2
 
-# 3) concatenar los CSV por proyecto en un unico dataset
-python3 -m pmt.merge_datasets --out out_batch_docker
+# 3) verificar (estatica + reejecucion de mutantes) y publicar en ../dataset,
+#    dentro del contenedor (necesita el volumen pmt_work con repos y builds)
+python3 -m pmt.verify_dataset --projects projects_v1 --replay 20     --project-dir out_run3_aws/aws-c-common_1 --repo /pmt_work/awslabs___aws-c-common/repo
+python3 -m pmt.publish_dataset --dest ../dataset --work /pmt_work     --run out_run3_aws --run out_run3_ly --run out_run3_catch
 ```
 
-`--project-budget` limita los segundos totales por proyecto (clone + build +
-cobertura + mutación) y `--max-mutants` el número de mutantes analizados;
-sin ellos se aplican los presupuestos por fase de `pmt/batch_projects.py`.
+Para otros proyectos: `--project-budget` limita los segundos totales por
+proyecto (clone + build + cobertura + mutación) y `--max-mutants` el número
+de mutantes; los `pmt_overrides.json` de cada proyecto tienen prioridad
+(ver `builder4c/GUIA_UBUNTU.md` §10).
 
 ## Validación del formato
 

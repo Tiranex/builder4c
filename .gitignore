@@ -27,6 +27,8 @@ builder4c/out_batch*/
 builder4c/out_batch*.log
 builder4c/out_run*/
 builder4c/out_run*.log
+builder4c/out_smoke*/
+builder4c/out_smoke*.log
 builder4c/demo/out/
 *.mutation_workdir/
 mutants_out/

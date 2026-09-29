@@ -191,3 +191,47 @@ Ya incluidos: `emil-e___rapidcheck` (Catch2 v2 + glibc moderna),
 esos: `./docker/run_batch.sh --only emil-e___rapidcheck --only CESNET___libyang
 --only skypjack___entt --only KhronosGroup___SPIRV-Tools` (el reporte se
 fusiona con el existente).
+
+Desde 2026-09 el mismo fichero también amplía los límites del batch por
+proyecto (tienen prioridad sobre `--max-mutants` y los valores por defecto):
+
+```json
+{
+  "sources": ["source/hash_table.c", "source/uri.c"],
+  "max_sources": 3,
+  "max_tests": 0,
+  "max_mutants": 1500,
+  "mutant_budget_s": 600,
+  "mutation_deadline_s": 14400,
+  "coverage_max_tests": 600,
+  "coverage_deadline_s": 2400,
+  "test_expansion": "cmocka",
+  "exclude_tests": "_valgrind$"
+}
+```
+
+- `sources`: ficheros a mutar (relativos al repo); sin ella, selección
+  heurística de `max_sources` ficheros (excluye `*_test.c` y similares).
+- `max_tests`: tests que cubren las fuentes que se usan (0 = todos).
+- `max_mutants`, `mutant_budget_s`, `mutation_deadline_s`: mutantes
+  muestreados, presupuesto por mutante y tope de la fase de mutación.
+- `coverage_max_tests`, `coverage_deadline_s`: tests medidos con gcov y tope
+  de esa fase.
+- `test_expansion`: `"cmocka"`, `"gtest"` o `"catch2"` para convertir cada
+  binario de tests en sus casos individuales (ver `pmt/README.md`, «Enlace
+  test ctest → codigo»); `expand_tests`: regex de los tests de ctest que se
+  expanden (Catch2: `^RunTests$`). `exclude_tests`: regex de tests de ctest
+  a descartar.
+- `test_workers`: tests de un mismo mutante en paralelo (4 en la tanda 3);
+  todo test que falla en paralelo se reejecuta solo y ese es su veredicto.
+- `timeout_factor` / `timeout_floor_s` (10 / 3 por defecto): limite por test
+  durante la mutacion = `min(ctest_timeout, max(floor, factor × t_base + 2))`,
+  como en Major; evita que los mutantes con bucle infinito agoten el
+  presupuesto y se pierdan los kills `TIME`.
+
+Ejemplos completos en `projects_v1/{awslabs___aws-c-common,CESNET___libyang,
+catchorg___Catch2}/pmt_overrides.json` y plan de ejecución en
+`HANDOFF_ampliacion_3_proyectos.md`. `--smoke` recorre todo el pipeline con
+límites mínimos para probar la configuración antes de la tanda larga.
+Con varios contenedores en paralelo, usar `NAME=` y `OUT=` distintos:
+`NAME=pmt-aws OUT=out_run3_aws ./docker/run_batch.sh --only awslabs___aws-c-common`.
